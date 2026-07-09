@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>COGLOAD-7 · 인지 부하 진단</title>
+<style>
+  :root{
+    --bg:#0a0e13;
+    --panel:#121821;
+    --panel2:#1a2330;
+    --line:#293544;
+    --text:#e9eef4;
+    --muted:#7c8a9a;
+    --cyan:#48d8c2;
+    --amber:#f0a860;
+    --red:#ef5b6d;
+    --violet:#a58bff;
+    --yellow:#f0d860;
+    --blue:#5aa8f0;
+    --green:#5ed98a;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none;}
+  html,body{
+    margin:0; padding:0; height:100%; overflow:hidden;
+    background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    touch-action:none;
+  }
+  #app{position:relative; width:100%; height:100vh; height:100dvh; display:flex; flex-direction:column;}
+
+  /* ---- status bar ---- */
+  #statusbar{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:10px 14px; background:var(--panel); border-bottom:1px solid var(--line);
+    font-family:ui-monospace,'SF Mono',Menlo,monospace; font-size:12px; color:var(--muted);
+    letter-spacing:.03em; z-index:5;
+  }
+  #statusbar .lvl{color:var(--cyan); font-weight:700; font-size:13px;}
+  #statusbar .name{color:var(--text); margin-left:6px;}
+  #statusbar .timer{color:var(--amber); font-variant-numeric:tabular-nums;}
+
+  /* ---- EEG strip ---- */
+  #eegwrap{height:46px; background:var(--panel); border-bottom:1px solid var(--line); position:relative;}
+  #eeg{width:100%; height:100%; display:block;}
+  #eeglabel{position:absolute; top:3px; left:10px; font-family:ui-monospace,monospace; font-size:9px; color:var(--muted); letter-spacing:.1em;}
+
+  /* ---- stage ---- */
+  #stage{position:relative; flex:1; overflow:hidden; background:
+    radial-gradient(ellipse at 50% 0%, #131b26 0%, #0a0e13 70%);
+  }
+
+  /* tracking lane */
+  #lane{
+    position:relative; height:120px; margin:10px 12px 0 12px;
+    background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    overflow:hidden; display:none; touch-action:none;
+  }
+  #lane.active{display:block;}
+  #laneTrack{position:absolute; left:14px; right:14px; top:50%; height:2px; background:var(--line); transform:translateY(-50%);}
+  #laneZone{position:absolute; top:50%; width:56px; height:56px; margin-top:-28px; margin-left:-28px;
+    border-radius:50%; background:rgba(72,216,194,.14); border:2px solid var(--cyan);
+    display:flex; align-items:center; justify-content:center; transition:border-color .15s, background .15s;}
+  #laneCursor{position:absolute; top:50%; width:26px; height:26px; margin-top:-13px; margin-left:-13px;
+    border-radius:50%; background:var(--amber); box-shadow:0 0 12px rgba(240,168,96,.6); opacity:.4;}
+  #laneCursor.on{background:var(--cyan); box-shadow:0 0 14px rgba(72,216,194,.8); opacity:1;}
+  #lanecaption{position:absolute; top:4px; left:12px; font-size:9px; font-family:ui-monospace,monospace; color:var(--muted); letter-spacing:.08em;}
+
+  /* reaction play area */
+  #playarea{position:absolute; inset:0; top:0; pointer-events:none;}
+  .target{
+    position:absolute; width:64px; height:64px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    font-size:11px; font-weight:700; color:#08110d;
+    transform:translate(-50%,-50%); cursor:pointer;
+    pointer-events:auto;
+  }
+  .target.go{background:radial-gradient(circle at 35% 30%, #7effc6, var(--green)); box-shadow:0 0 20px rgba(94,217,138,.5);}
+  .target.nogo{background:radial-gradient(circle at 35% 30%, #ff8b98, var(--red)); box-shadow:0 0 20px rgba(239,91,109,.5);}
+  .target .ring{position:absolute; inset:-6px; border-radius:50%; border:2px solid rgba(255,255,255,.35);
+    animation:shrink linear forwards;}
+  @keyframes shrink{ from{ transform:scale(1); opacity:.9;} to{ transform:scale(0.15); opacity:0;} }
+
+  /* rule banner */
+  #rulebanner{
+    position:absolute; top:14px; left:50%; transform:translate(-50%,-140%);
+    background:var(--violet); color:#12081f; font-weight:800; font-size:13px;
+    padding:10px 18px; border-radius:999px; box-shadow:0 6px 20px rgba(165,139,255,.4);
+    transition:transform .35s cubic-bezier(.2,.9,.3,1.3); z-index:8; white-space:nowrap;
+  }
+  #rulebanner.show{transform:translate(-50%,0);}
+
+  /* counting swatch */
+  #countwrap{position:absolute; top:14px; right:14px; text-align:right; z-index:6;}
+  #countswatch{width:34px; height:34px; border-radius:9px; background:var(--panel2); border:1px solid var(--line); margin-left:auto; transition:background .12s;}
+  #countcaption{font-size:9px; font-family:ui-monospace,monospace; color:var(--muted); margin-top:4px; letter-spacing:.05em;}
+
+  /* ---- overlays ---- */
+  .overlay{
+    position:absolute; inset:0; background:rgba(8,11,15,.88); backdrop-filter:blur(6px);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    padding:28px; z-index:20; text-align:center;
+  }
+  .hidden{display:none !important;}
+  .eyebrow{font-family:ui-monospace,monospace; font-size:11px; letter-spacing:.15em; color:var(--cyan); margin-bottom:10px;}
+  h1{font-size:26px; margin:0 0 10px 0; line-height:1.25;}
+  h2{font-size:20px; margin:0 0 8px 0;}
+  p.desc{color:var(--muted); font-size:14px; line-height:1.6; max-width:320px; margin:0 0 22px 0;}
+  .rulelist{text-align:left; background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:14px 16px; max-width:320px; margin-bottom:22px; font-size:13px; line-height:1.9; color:var(--text);}
+  .rulelist b{color:var(--cyan);}
+  .btn{
+    appearance:none; border:none; border-radius:12px; padding:15px 32px; font-size:15px; font-weight:700;
+    background:var(--cyan); color:#04231d; letter-spacing:.02em; box-shadow:0 8px 24px rgba(72,216,194,.25);
+  }
+  .btn.secondary{background:transparent; color:var(--muted); border:1px solid var(--line); box-shadow:none; margin-top:10px;}
+  .btnrow{display:flex; gap:10px; flex-wrap:wrap; justify-content:center;}
+
+  .countdown-num{font-family:ui-monospace,monospace; font-size:72px; font-weight:800; color:var(--cyan); text-shadow:0 0 30px rgba(72,216,194,.5);}
+
+  /* memory dots */
+  .seqrow{display:flex; gap:14px; margin:18px 0 26px 0;}
+  .seqdot{width:44px; height:44px; border-radius:50%; opacity:.25; transition:opacity .15s, transform .15s;}
+  .seqdot.lit{opacity:1; transform:scale(1.15);}
+  .colorpad{display:flex; gap:12px; flex-wrap:wrap; justify-content:center; max-width:320px; margin-bottom:18px;}
+  .colorbtn{width:56px; height:56px; border-radius:14px; border:2px solid rgba(255,255,255,.15);}
+  .colorbtn:active{transform:scale(.92);}
+  .inputseq{display:flex; gap:8px; min-height:26px; margin-bottom:6px;}
+  .inputseq .chip{width:22px; height:22px; border-radius:50%; border:1px solid rgba(255,255,255,.2);}
+
+  /* number pad */
+  .numpad{display:grid; grid-template-columns:repeat(5,1fr); gap:10px; max-width:320px; margin-bottom:20px;}
+  .numbtn{padding:14px 0; border-radius:10px; background:var(--panel2); border:1px solid var(--line); color:var(--text); font-size:16px; font-weight:700;}
+  .numbtn:active{background:var(--cyan); color:#04231d;}
+
+  /* result */
+  .metric{width:100%; max-width:320px; display:flex; justify-content:space-between; align-items:center;
+    padding:10px 14px; background:var(--panel); border:1px solid var(--line); border-radius:10px; margin-bottom:8px; font-size:13px;}
+  .metric .val{font-family:ui-monospace,monospace; font-weight:700;}
+  .metric .ok{color:var(--green);} .metric .bad{color:var(--red);}
+  .verdict{font-size:15px; font-weight:800; padding:6px 16px; border-radius:999px; margin-bottom:16px;}
+  .verdict.pass{background:rgba(94,217,138,.15); color:var(--green); border:1px solid rgba(94,217,138,.4);}
+  .verdict.fail{background:rgba(239,91,109,.15); color:var(--red); border:1px solid rgba(239,91,109,.4);}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="statusbar">
+    <div><span class="lvl">LV.<span id="sbLevel">0</span></span><span class="name" id="sbName">-</span></div>
+    <div class="timer" id="sbTimer">00.0s</div>
+  </div>
+
+  <div id="eegwrap">
+    <div id="eeglabel">COGNITIVE LOAD MONITOR</div>
+    <canvas id="eeg"></canvas>
+  </div>
+
+  <div id="stage">
+    <div id="lane">
+      <div id="lanecaption">추적: 손가락으로 원을 계속 따라가세요</div>
+      <div id="laneTrack"></div>
+      <div id="laneZone"></div>
+      <div id="laneCursor"></div>
+    </div>
+
+    <div id="countwrap" style="display:none;">
+      <div id="countswatch"></div>
+      <div id="countcaption">SIGNAL: -</div>
+    </div>
+
+    <div id="rulebanner"></div>
+
+    <div id="playarea"></div>
+  </div>
+
+  <!-- START -->
+  <div class="overlay" id="ovStart">
+    <div class="eyebrow">COGLOAD-7 · MULTITASK LIMIT TEST</div>
+    <h1>당신의 멀티태스킹<br>한계는 몇 단계일까요?</h1>
+    <p class="desc">7단계로 나뉜 진단입니다. 단계가 오를수록 동시에 처리할 일이 하나씩 늘어납니다. 어느 단계에서 무너지는지 확인해보세요.</p>
+    <button class="btn" onclick="beginGame()">진단 시작</button>
+  </div>
+
+  <!-- LEVEL INTRO -->
+  <div class="overlay hidden" id="ovIntro">
+    <div class="eyebrow" id="introEyebrow">LEVEL 1</div>
+    <h1 id="introTitle">단일 반응</h1>
+    <div class="rulelist" id="introRules"></div>
+    <button class="btn" onclick="startCurrentLevel()">준비 완료</button>
+  </div>
+
+  <!-- COUNTDOWN -->
+  <div class="overlay hidden" id="ovCountdown">
+    <div class="countdown-num" id="cdNum">3</div>
+  </div>
+
+  <!-- MEMORIZE -->
+  <div class="overlay hidden" id="ovMemorize">
+    <div class="eyebrow">기억하세요</div>
+    <h2>순서를 외우세요</h2>
+    <div class="seqrow" id="seqRow"></div>
+    <p class="desc" id="memHint">라운드가 끝나면 이 순서를 다시 입력해야 합니다.</p>
+  </div>
+
+  <!-- COUNTING INPUT -->
+  <div class="overlay hidden" id="ovCountInput">
+    <div class="eyebrow">카운팅 확인</div>
+    <h2 id="countQ">보라색이 몇 번 나왔나요?</h2>
+    <div class="numpad" id="numpad"></div>
+    <div id="countSelected" style="font-family:ui-monospace,monospace; font-size:28px; color:var(--cyan); margin-bottom:10px;">-</div>
+    <button class="btn" onclick="submitCount()">제출</button>
+  </div>
+
+  <!-- MEMORY INPUT -->
+  <div class="overlay hidden" id="ovMemInput">
+    <div class="eyebrow">기억 확인</div>
+    <h2>본 순서대로 눌러주세요</h2>
+    <div class="inputseq" id="inputSeqDisplay"></div>
+    <div class="colorpad" id="colorPad"></div>
+    <button class="btn secondary" onclick="undoMem()">되돌리기</button>
+  </div>
+
+  <!-- RESULT -->
+  <div class="overlay hidden" id="ovResult">
+    <div class="eyebrow" id="resEyebrow">LEVEL 1 결과</div>
+    <div class="verdict" id="resVerdict">PASS</div>
+    <div id="resMetrics" style="width:100%; display:flex; flex-direction:column; align-items:center;"></div>
+    <div class="btnrow" id="resButtons"></div>
+  </div>
+
+  <!-- FINAL -->
+  <div class="overlay hidden" id="ovFinal">
+    <div class="eyebrow">진단 종료</div>
+    <h1 id="finalTitle">최종 결과</h1>
+    <p class="desc" id="finalDesc"></p>
+    <button class="btn" onclick="restartGame()">처음부터 다시</button>
+  </div>
+
+</div>
+
+<script>
+/* =========================================================
+   LEVEL CONFIG
+========================================================= */
+const LEVELS = [
+  { id:1, name:'단일 반응', duration:15,
+    reaction:{gonogo:false, spawnMin:1300, spawnMax:2000, ttl:1600},
+    tracking:null, counting:null, memory:null, ruleSwitch:null,
+    threshold:{reaction:0.7},
+    rules:['화면에 초록 원이 나타나면 <b>탭</b>하세요.', '15초간 진행됩니다.'] },
+
+  { id:2, name:'선택 반응', duration:15,
+    reaction:{gonogo:true, spawnMin:1100, spawnMax:1700, ttl:1400},
+    tracking:null, counting:null, memory:null, ruleSwitch:null,
+    threshold:{reaction:0.7},
+    rules:['<b>초록</b> = 탭하세요','<b>빨강</b> = 절대 탭하지 마세요 (그냥 사라지게 두세요)'] },
+
+  { id:3, name:'반응 + 추적', duration:20,
+    reaction:{gonogo:true, spawnMin:1300, spawnMax:1900, ttl:1500},
+    tracking:{speed:1.0}, counting:null, memory:null, ruleSwitch:null,
+    threshold:{reaction:0.65, tracking:0.6},
+    rules:['위쪽 트랙의 원을 손가락으로 <b>계속 추적</b>하세요.','동시에 아래에서 나타나는 초록/빨강 반응 과제도 처리하세요.'] },
+
+  { id:4, name:'+ 카운팅', duration:20,
+    reaction:{gonogo:true, spawnMin:1300, spawnMax:1900, ttl:1500},
+    tracking:{speed:1.1}, counting:{interval:2300}, memory:null, ruleSwitch:null,
+    threshold:{reaction:0.6, tracking:0.55, counting:true},
+    rules:['우측 상단에 색이 계속 깜빡입니다.','지정된 색이 나온 횟수를 <b>마음속으로 세세요</b>.','추적 + 반응 과제도 동시에 진행됩니다.'] },
+
+  { id:5, name:'+ 기억', duration:22,
+    reaction:{gonogo:true, spawnMin:1300, spawnMax:1900, ttl:1500},
+    tracking:{speed:1.15}, counting:{interval:2300}, memory:{length:3}, ruleSwitch:null,
+    threshold:{reaction:0.58, tracking:0.53, counting:true, memory:true},
+    rules:['시작 전 색깔 순서 3개를 보여줍니다. <b>외우세요</b>.','라운드가 끝나면 그 순서를 다시 입력해야 합니다.','추적 + 반응 + 카운팅도 계속됩니다.'] },
+
+  { id:6, name:'+ 규칙 전환', duration:25,
+    reaction:{gonogo:true, spawnMin:1200, spawnMax:1800, ttl:1400},
+    tracking:{speed:1.2}, counting:{interval:2100}, memory:{length:4}, ruleSwitch:{switches:2},
+    threshold:{reaction:0.55, tracking:0.5, counting:true, memory:true},
+    rules:['라운드 도중 배너로 <b>탭 규칙이 뒤바뀝니다</b>.','전환 후엔 빨강을 탭하고 초록을 피해야 할 수도 있어요.','기억(4개) + 카운팅 + 추적도 함께 진행됩니다.'] },
+
+  { id:7, name:'최종 콤보', duration:30,
+    reaction:{gonogo:true, spawnMin:900, spawnMax:1400, ttl:1200},
+    tracking:{speed:1.4}, counting:{interval:1900}, memory:{length:5}, ruleSwitch:{switches:4},
+    threshold:{reaction:0.55, tracking:0.5, counting:true, memory:true},
+    rules:['지금까지 나온 모든 과제가 <b>동시에, 더 빠르게</b> 진행됩니다.','기억 5개 + 카운팅 + 추적 + 반응 + 잦은 규칙 전환.','살아남으면 당신은 진짜 멀티태스커입니다.'] },
+];
+
+const PALETTE = { red:'#ef5b6d', green:'#5ed98a', blue:'#5aa8f0', yellow:'#f0d860', violet:'#a58bff' };
+const COUNT_COLORS = ['violet','blue','yellow','red'];
+const MEM_COLORS = ['red','green','blue','yellow','violet'];
+
+/* =========================================================
+   STATE
+========================================================= */
+let levelIndex = 0;
+let levelResults = [];
+let engine = null; // active playing-phase engine instance
+
+const el = id => document.getElementById(id);
+function show(id){ el(id).classList.remove('hidden'); }
+function hide(id){ el(id).classList.add('hidden'); }
+
+/* =========================================================
+   EEG VISUAL (signature element)
+========================================================= */
+const eegCanvas = el('eeg');
+const eegCtx = eegCanvas.getContext('2d');
+let eegLoad = 0.15; // 0..1 target load, drives amplitude/jitter
+let eegHist = [];
+function resizeEeg(){
+  eegCanvas.width = eegCanvas.clientWidth * devicePixelRatio;
+  eegCanvas.height = eegCanvas.clientHeight * devicePixelRatio;
+}
+function drawEeg(){
+  const w = eegCanvas.width, h = eegCanvas.height;
+  eegCtx.clearRect(0,0,w,h);
+  eegHist.push(eegLoad + (Math.random()-0.5)*eegLoad*0.8);
+  if(eegHist.length > 140) eegHist.shift();
+  eegCtx.beginPath();
+  eegCtx.strokeStyle = eegLoad > 0.7 ? '#ef5b6d' : (eegLoad > 0.4 ? '#f0a860' : '#48d8c2');
+  eegCtx.lineWidth = 2 * devicePixelRatio;
+  const midY = h/2;
+  eegHist.forEach((v,i)=>{
+    const x = (i/140)*w;
+    const y = midY - v*midY*0.85;
+    if(i===0) eegCtx.moveTo(x,y); else eegCtx.lineTo(x,y);
+  });
+  eegCtx.stroke();
+  requestAnimationFrame(drawEeg);
+}
+resizeEeg();
+window.addEventListener('resize', resizeEeg);
+requestAnimationFrame(drawEeg);
+
+/* =========================================================
+   FLOW: START -> INTRO -> COUNTDOWN -> [MEMORIZE] -> PLAY -> [COUNT INPUT] -> [MEM INPUT] -> RESULT -> next/retry/final
+========================================================= */
+function beginGame(){
+  hide('ovStart');
+  levelIndex = 0;
+  levelResults = [];
+  showIntro();
+}
+
+function showIntro(){
+  const cfg = LEVELS[levelIndex];
+  el('introEyebrow').textContent = `LEVEL ${cfg.id} / 7`;
+  el('introTitle').textContent = cfg.name;
+  el('introRules').innerHTML = cfg.rules.map(r=>`<div>· ${r}</div>`).join('');
+  el('sbLevel').textContent = cfg.id;
+  el('sbName').textContent = cfg.name;
+  show('ovIntro');
+}
+
+function startCurrentLevel(){
+  hide('ovIntro');
+  runCountdown(()=>{
+    const cfg = LEVELS[levelIndex];
+    if(cfg.memory){
+      runMemorize(cfg, ()=> runPlaying(cfg));
+    } else {
+      runPlaying(cfg);
+    }
+  });
+}
+
+function runCountdown(cb){
+  show('ovCountdown');
+  let n = 3;
+  el('cdNum').textContent = n;
+  const iv = setInterval(()=>{
+    n--;
+    if(n<=0){ clearInterval(iv); hide('ovCountdown'); cb(); }
+    else el('cdNum').textContent = n;
+  },600);
+}
+
+/* ---------- MEMORIZE PHASE ---------- */
+let currentSequence = [];
+function runMemorize(cfg, cb){
+  currentSequence = [];
+  for(let i=0;i<cfg.memory.length;i++){
+    currentSequence.push(MEM_COLORS[Math.floor(Math.random()*MEM_COLORS.length)]);
+  }
+  const row = el('seqRow');
+  row.innerHTML = '';
+  const dots = currentSequence.map(c=>{
+    const d = document.createElement('div');
+    d.className = 'seqdot';
+    d.style.background = PALETTE[c];
+    row.appendChild(d);
+    return d;
+  });
+  show('ovMemorize');
+  let i = 0;
+  function litNext(){
+    if(i>0) dots[i-1].classList.remove('lit');
+    if(i>=dots.length){
+      setTimeout(()=>{ hide('ovMemorize'); cb(); }, 500);
+      return;
+    }
+    dots[i].classList.add('lit');
+    i++;
+    setTimeout(litNext, 700);
+  }
+  setTimeout(litNext, 500);
+}
+
+/* ---------- PLAYING PHASE ---------- */
+function runPlaying(cfg){
+  el('sbLevel').textContent = cfg.id;
+  el('sbName').textContent = cfg.name;
+
+  const playarea = el('playarea');
+  playarea.innerHTML = '';
+
+  // tracking lane setup
+  const laneEl = el('lane');
+  const zoneEl = el('laneZone');
+  const cursorEl = el('laneCursor');
+  laneEl.classList.toggle('active', !!cfg.tracking);
+
+  // counting setup
+  const countWrap = el('countwrap');
+  let countTarget = null, countActual = 0;
+  if(cfg.counting){
+    countWrap.style.display = 'block';
+    countTarget = COUNT_COLORS[Math.floor(Math.random()*COUNT_COLORS.length)];
+    el('countcaption').textContent = 'SIGNAL: 대기중';
+  } else {
+    countWrap.style.display = 'none';
+  }
+
+  // rule switch setup
+  let currentRule = 'normal'; // normal: green=go, red=nogo. swapped: reversed.
+  let switchTimers = [];
+  if(cfg.ruleSwitch){
+    const n = cfg.ruleSwitch.switches;
+    for(let i=1;i<=n;i++){
+      const t = (cfg.duration*1000) * (i/(n+1)) + (Math.random()*1500-750);
+      switchTimers.push(t);
+    }
+  }
+
+  // metrics
+  let reactionTotal = 0, reactionCorrect = 0;
+  let trackOnFrames = 0, trackTotalFrames = 0;
+  let pointerInLane = false, laneRect = null, cursorX = 0.5; // 0..1 fraction
+
+  // pointer handling for tracking lane
+  let laneDragId = null;
+  function laneDown(e){
+    if(laneDragId !== null) return; // only track one finger at a time
+    laneDragId = e.pointerId;
+    pointerInLane = true;
+    try{ laneEl.setPointerCapture(e.pointerId); }catch(err){}
+    laneMove(e);
+  }
+  function laneMove(e){
+    if(laneDragId === null || e.pointerId !== laneDragId) return;
+    laneRect = laneEl.getBoundingClientRect();
+    const x = (e.clientX - laneRect.left) / laneRect.width;
+    cursorX = Math.max(0, Math.min(1, x));
+  }
+  function laneUp(e){
+    if(laneDragId === null || (e && e.pointerId !== laneDragId)) return;
+    pointerInLane = false;
+    laneDragId = null;
+  }
+  if(cfg.tracking){
+    laneEl.addEventListener('pointerdown', laneDown);
+    laneEl.addEventListener('pointermove', laneMove);
+    laneEl.addEventListener('pointerup', laneUp);
+    laneEl.addEventListener('pointercancel', laneUp);
+  }
+
+  // spawn reaction targets
+  let spawnTimeoutId = null;
+  function spawnTarget(){
+    if(cfg.reaction){
+      const isGreen = cfg.reaction.gonogo ? (Math.random() < 0.6) : true;
+      const color = isGreen ? 'go' : 'nogo';
+      const goIsCorrectTap = cfg.reaction.gonogo
+        ? (currentRule === 'normal' ? isGreen : !isGreen)
+        : true;
+      const t = document.createElement('div');
+      t.className = 'target ' + color;
+      const areaW = playarea.clientWidth, areaH = playarea.clientHeight;
+      const margin = 44;
+      const x = margin + Math.random()*(areaW - margin*2);
+      const y = 20 + Math.random()*(areaH - 40);
+      t.style.left = x+'px'; t.style.top = y+'px';
+      const ring = document.createElement('div');
+      ring.className = 'ring';
+      ring.style.animationDuration = cfg.reaction.ttl+'ms';
+      t.appendChild(ring);
+      let resolved = false;
+      t.addEventListener('pointerdown', ()=>{
+        if(resolved) return; resolved = true;
+        reactionTotal++;
+        if(goIsCorrectTap){ reactionCorrect++; t.style.opacity='0'; }
+        else { t.style.background = '#333'; }
+        t.remove();
+      });
+      playarea.appendChild(t);
+      setTimeout(()=>{
+        if(resolved) return;
+        // expired: correct if it was NOT supposed to be tapped
+        reactionTotal++;
+        if(!goIsCorrectTap) reactionCorrect++;
+        t.remove();
+      }, cfg.reaction.ttl);
+    }
+    const wait = cfg.reaction.spawnMin + Math.random()*(cfg.reaction.spawnMax-cfg.reaction.spawnMin);
+    spawnTimeoutId = setTimeout(spawnTarget, wait);
+  }
+  if(cfg.reaction) spawnTimeoutId = setTimeout(spawnTarget, 400);
+
+  // counting flashes
+  let countIntervalId = null;
+  if(cfg.counting){
+    function flash(){
+      const c = Math.random() < 0.32 ? countTarget : COUNT_COLORS[Math.floor(Math.random()*COUNT_COLORS.length)];
+      if(c === countTarget) countActual++;
+      el('countswatch').style.background = PALETTE[c];
+      el('countcaption').textContent = 'SIGNAL: 활성';
+      setTimeout(()=>{ el('countswatch').style.background='#1a2330'; el('countcaption').textContent='SIGNAL: 대기중'; }, 380);
+    }
+    countIntervalId = setInterval(flash, cfg.counting.interval);
+  }
+
+  // timer / main loop
+  const durMs = cfg.duration*1000;
+  const startTime = performance.now();
+  let rafId = null;
+  let bannerTimeout = null;
+
+  function frame(now){
+    const elapsed = now - startTime;
+    const remaining = Math.max(0, durMs - elapsed);
+    el('sbTimer').textContent = (remaining/1000).toFixed(1)+'s';
+
+    // rule switch check
+    while(switchTimers.length && elapsed >= switchTimers[0]){
+      switchTimers.shift();
+      currentRule = currentRule === 'normal' ? 'swapped' : 'normal';
+      const banner = el('rulebanner');
+      banner.textContent = currentRule === 'normal' ? '규칙 원복: 초록 = 탭' : '규칙 전환: 빨강 = 탭!';
+      banner.classList.add('show');
+      clearTimeout(bannerTimeout);
+      bannerTimeout = setTimeout(()=>banner.classList.remove('show'), 1600);
+    }
+
+    // tracking update
+    if(cfg.tracking){
+      const t = elapsed*0.001*cfg.tracking.speed;
+      const zoneFrac = 0.5 + Math.sin(t*1.3)*0.38; // 0..1
+      const laneW = laneEl.clientWidth;
+      const zoneX = zoneFrac*laneW;
+      zoneEl.style.left = zoneX+'px';
+      const cursorPx = cursorX*laneW;
+      cursorEl.style.left = pointerInLane ? cursorPx+'px' : cursorEl.style.left;
+      trackTotalFrames++;
+      const onTarget = pointerInLane && Math.abs(cursorPx - zoneX) < 46;
+      cursorEl.classList.toggle('on', onTarget);
+      zoneEl.style.borderColor = onTarget ? 'var(--cyan)' : 'var(--amber)';
+      if(onTarget) trackOnFrames++;
+    }
+
+    // eeg load estimate
+    const activeCount = [cfg.reaction, cfg.tracking, cfg.counting, cfg.memory, cfg.ruleSwitch].filter(Boolean).length;
+    let perf = 1;
+    if(cfg.reaction && reactionTotal>0) perf = Math.min(perf, reactionCorrect/reactionTotal);
+    if(cfg.tracking && trackTotalFrames>0) perf = Math.min(perf, trackOnFrames/trackTotalFrames);
+    eegLoad = Math.min(0.95, 0.15 + activeCount*0.09 + (1-perf)*0.5);
+
+    if(elapsed < durMs){
+      rafId = requestAnimationFrame(frame);
+    } else {
+      finishPlaying();
+    }
+  }
+  rafId = requestAnimationFrame(frame);
+
+  function finishPlaying(){
+    if(spawnTimeoutId) clearTimeout(spawnTimeoutId);
+    if(countIntervalId) clearInterval(countIntervalId);
+    if(cfg.tracking){
+      laneEl.removeEventListener('pointerdown', laneDown);
+      laneEl.removeEventListener('pointermove', laneMove);
+      laneEl.removeEventListener('pointerup', laneUp);
+      laneEl.removeEventListener('pointercancel', laneUp);
+    }
+    playarea.innerHTML = '';
+    el('rulebanner').classList.remove('show');
+
+    const metrics = {
+      reaction: cfg.reaction ? (reactionTotal>0 ? reactionCorrect/reactionTotal : 1) : null,
+      tracking: cfg.tracking ? (trackTotalFrames>0 ? trackOnFrames/trackTotalFrames : 0) : null,
+      countingTarget: countTarget, countingActual: countActual, countingGuess: null,
+      memoryTarget: cfg.memory ? [...currentSequence] : null, memoryGuess: null,
+    };
+
+    if(cfg.counting){
+      askCounting(countTarget, (guess)=>{
+        metrics.countingGuess = guess;
+        if(cfg.memory){
+          askMemory(currentSequence, (guessSeq)=>{
+            metrics.memoryGuess = guessSeq;
+            showResult(cfg, metrics);
+          });
+        } else {
+          showResult(cfg, metrics);
+        }
+      });
+    } else if(cfg.memory){
+      askMemory(currentSequence, (guessSeq)=>{
+        metrics.memoryGuess = guessSeq;
+        showResult(cfg, metrics);
+      });
+    } else {
+      showResult(cfg, metrics);
+    }
+  }
+}
+
+/* ---------- COUNTING INPUT ---------- */
+function askCounting(targetColor, cb){
+  const names = {violet:'보라', blue:'파랑', yellow:'노랑', red:'빨강'};
+  el('countQ').textContent = `${names[targetColor]}색이 몇 번 나왔나요?`;
+  const pad = el('numpad');
+  pad.innerHTML = '';
+  let selected = null;
+  el('countSelected').textContent = '-';
+  for(let i=0;i<=9;i++){
+    const b = document.createElement('button');
+    b.className = 'numbtn';
+    b.textContent = i;
+    b.onclick = ()=>{ selected = i; el('countSelected').textContent = i; };
+    pad.appendChild(b);
+  }
+  show('ovCountInput');
+  window._submitCount = ()=>{
+    if(selected===null) return;
+    hide('ovCountInput');
+    cb(selected);
+  };
+}
+function submitCount(){ window._submitCount && window._submitCount(); }
+
+/* ---------- MEMORY INPUT ---------- */
+function askMemory(targetSeq, cb){
+  const pad = el('colorPad');
+  pad.innerHTML = '';
+  let guess = [];
+  function renderGuess(){
+    const disp = el('inputSeqDisplay');
+    disp.innerHTML = '';
+    guess.forEach(c=>{
+      const chip = document.createElement('div');
+      chip.className = 'chip';
+      chip.style.background = PALETTE[c];
+      disp.appendChild(chip);
+    });
+    if(guess.length === targetSeq.length){
+      hide('ovMemInput');
+      cb([...guess]);
+    }
+  }
+  MEM_COLORS.forEach(c=>{
+    const b = document.createElement('button');
+    b.className = 'colorbtn';
+    b.style.background = PALETTE[c];
+    b.onclick = ()=>{ if(guess.length < targetSeq.length){ guess.push(c); renderGuess(); } };
+    pad.appendChild(b);
+  });
+  window._undoMem = ()=>{ guess.pop(); renderGuess(); };
+  renderGuess();
+  show('ovMemInput');
+}
+function undoMem(){ window._undoMem && window._undoMem(); }
+
+/* ---------- RESULT ---------- */
+function showResult(cfg, metrics){
+  el('resEyebrow').textContent = `LEVEL ${cfg.id} 결과`;
+  const box = el('resMetrics');
+  box.innerHTML = '';
+  let allPass = true;
+
+  function addMetric(label, valueText, pass){
+    allPass = allPass && pass;
+    const row = document.createElement('div');
+    row.className = 'metric';
+    row.innerHTML = `<span>${label}</span><span class="val ${pass?'ok':'bad'}">${valueText} ${pass?'✓':'✕'}</span>`;
+    box.appendChild(row);
+  }
+
+  if(metrics.reaction !== null){
+    const pct = Math.round(metrics.reaction*100);
+    addMetric('반응 정확도', pct+'%', metrics.reaction >= cfg.threshold.reaction);
+  }
+  if(metrics.tracking !== null){
+    const pct = Math.round(metrics.tracking*100);
+    addMetric('추적 정확도', pct+'%', metrics.tracking >= cfg.threshold.tracking);
+  }
+  if(metrics.countingGuess !== null){
+    const pass = metrics.countingGuess === metrics.countingActual;
+    addMetric('카운팅', `${metrics.countingGuess} (정답 ${metrics.countingActual})`, pass);
+  }
+  if(metrics.memoryGuess !== null){
+    const pass = metrics.memoryGuess.length === metrics.memoryTarget.length &&
+      metrics.memoryGuess.every((c,i)=>c===metrics.memoryTarget[i]);
+    addMetric('기억 재현', pass ? '일치' : '불일치', pass);
+  }
+
+  el('resVerdict').textContent = allPass ? 'CLEAR' : 'FAIL';
+  el('resVerdict').className = 'verdict ' + (allPass ? 'pass' : 'fail');
+
+  levelResults[cfg.id-1] = { cfg, metrics, pass: allPass };
+
+  const btnRow = el('resButtons');
+  btnRow.innerHTML = '';
+  if(allPass){
+    const b = document.createElement('button');
+    b.className = 'btn';
+    b.textContent = (levelIndex < LEVELS.length-1) ? '다음 단계로' : '최종 결과 보기';
+    b.onclick = ()=>{
+      hide('ovResult');
+      if(levelIndex < LEVELS.length-1){ levelIndex++; showIntro(); }
+      else { showFinal(true); }
+    };
+    btnRow.appendChild(b);
+  } else {
+    const retry = document.createElement('button');
+    retry.className = 'btn';
+    retry.textContent = '이 단계 재도전';
+    retry.onclick = ()=>{ hide('ovResult'); startCurrentLevel(); };
+    btnRow.appendChild(retry);
+
+    const stop = document.createElement('button');
+    stop.className = 'btn secondary';
+    stop.textContent = '여기서 진단 종료';
+    stop.onclick = ()=>{ hide('ovResult'); showFinal(false); };
+    btnRow.appendChild(stop);
+  }
+  show('ovResult');
+}
+
+/* ---------- FINAL ---------- */
+function showFinal(completedAll){
+  const reachedLevel = levelIndex+1;
+  el('finalTitle').textContent = completedAll
+    ? '7단계 전부 통과!'
+    : `당신의 한계는 LV.${reachedLevel} 입니다`;
+  el('finalDesc').textContent = completedAll
+    ? '동시에 5가지 과제(반응·추적·카운팅·기억·규칙전환)를 처리해냈습니다. 실제로 상위권 멀티태스킹 능력입니다.'
+    : `LV.${reachedLevel} 단계(${LEVELS[levelIndex].name})에서 처리 한계에 도달했습니다. 대부분의 사람은 3~5단계 사이에서 무너집니다.`;
+  show('ovFinal');
+}
+
+function restartGame(){
+  hide('ovFinal');
+  show('ovStart');
+  eegLoad = 0.15;
+}
+</script>
+</body>
+</html>
